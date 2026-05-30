@@ -1,0 +1,30 @@
+name: AI Trend Auto Post
+
+on:
+  schedule:
+    - cron: '0 21 * * *'   # 日本時間 06:00
+    - cron: '0 3 * * *'    # 日本時間 12:00
+    - cron: '0 9 * * *'    # 日本時間 18:00
+    - cron: '0 14 * * *'   # 日本時間 23:00
+  workflow_dispatch:        # 手動実行ボタン
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run AI trend automation
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+        run: node src/index.js
