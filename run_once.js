@@ -69,16 +69,22 @@ async function analyzeAndGenerate(articles) {
 
 ${articleList}
 
-これらを読んで、以下をJSON形式で返してください（説明不要・JSONのみ）:
+これらを分析して、以下をJSON形式で返してください（説明不要・JSONのみ）:
 {
-  "trend": "今日最も注目すべきAIトレンドを1文で",
-  "post": "そのトレンドをもとにしたSNS投稿文（日本語・200字以内・ハッシュタグ3つ含む）"
+  "top_trend": "今日最も注目すべきAIトレンドのタイトル（20字以内）",
+  "summary": "そのトレンドの背景・理由・影響を3〜4文で具体的に説明。数字・企業名・モデル名など固有名詞を必ず含める",
+  "news_picks": [
+    "注目ニュース1（1文で具体的に）",
+    "注目ニュース2（1文で具体的に）",
+    "注目ニュース3（1文で具体的に）"
+  ],
+  "post": "SNS投稿文（日本語・300字程度・具体的な数字や固有名詞を含む・ハッシュタグ3〜5個を末尾に）"
 }`;
 
   const response = await groq.chat.completions.create({
     model: 'llama-3.3-70b-versatile',
     messages: [{ role: 'user', content: prompt }],
-    max_tokens: 800
+    max_tokens: 1500
   });
   const text = response.choices[0].message.content;
 
@@ -100,13 +106,17 @@ ${articleList}
 // 3. Slack 通知
 // ============================================
 
-async function sendToSlack(trend, post) {
+async function sendToSlack(result) {
   const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+  const newsPicks = (result.news_picks || []).map(n => `• ${n}`).join('\n');
+  const today = new Date().toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' });
+
   if (!webhookUrl) {
-    console.log('SLACK_WEBHOOK_URL が未設定です。コンソール出力のみ行います。');
     console.log('\n===== 生成された投稿 =====');
-    console.log(`トレンド: ${trend}`);
-    console.log(`\n投稿文:\n${post}`);
+    console.log(`トレンド: ${result.top_trend}`);
+    console.log(`\n概要:\n${result.summary}`);
+    console.log(`\n注目ニュース:\n${newsPicks}`);
+    console.log(`\n投稿文:\n${result.post}`);
     return;
   }
 
@@ -114,16 +124,25 @@ async function sendToSlack(trend, post) {
     blocks: [
       {
         type: 'header',
-        text: { type: 'plain_text', text: '今日のAIトレンド投稿' }
+        text: { type: 'plain_text', text: `📰 AIトレンドレポート｜${today}` }
       },
       {
         type: 'section',
-        text: { type: 'mrkdwn', text: `*トレンド*\n${trend}` }
+        text: { type: 'mrkdwn', text: `*本日のトレンド*\n*${result.top_trend}*` }
+      },
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: `*概要*\n${result.summary}` }
       },
       { type: 'divider' },
       {
         type: 'section',
-        text: { type: 'mrkdwn', text: `*生成された投稿文*\n${post}` }
+        text: { type: 'mrkdwn', text: `*注目ニュース3選*\n${newsPicks}` }
+      },
+      { type: 'divider' },
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: `*SNS投稿文*\n${result.post}` }
       }
     ]
   });
@@ -160,7 +179,7 @@ async function main() {
   console.log(`✅ 生成完了`);
 
   // Slack 送信
-  await sendToSlack(result.trend, result.post);
+  await sendToSlack(result);
 }
 
 main().catch(err => {
