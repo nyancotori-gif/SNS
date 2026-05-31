@@ -1,10 +1,10 @@
 // GitHub Actions 用: 収集 → 分析 → 生成 → Slack通知 を1回実行して終了
 const axios = require('axios');
-const { GoogleGenAI } = require('@google/genai');
+const Groq = require('groq-sdk');
 const Parser = require('rss-parser');
 require('dotenv').config();
 
-const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const rssParser = new Parser();
 
 // ============================================
@@ -75,11 +75,12 @@ ${articleList}
   "post": "そのトレンドをもとにしたSNS投稿文（日本語・200字以内・ハッシュタグ3つ含む）"
 }`;
 
-  const response = await genai.models.generateContent({
-    model: 'gemini-2.0-flash-lite',
-    contents: prompt
+  const response = await groq.chat.completions.create({
+    model: 'llama-3.3-70b-versatile',
+    messages: [{ role: 'user', content: prompt }],
+    max_tokens: 800
   });
-  const text = response.text;
+  const text = response.choices[0].message.content;
 
   // JSON ブロックを抽出（```json ... ``` や { ... } 形式に対応）
   const jsonMatch = text.match(/```json\s*([\s\S]*?)```/) ||
