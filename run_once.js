@@ -5,7 +5,7 @@ const Parser = require('rss-parser');
 require('dotenv').config();
 
 const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const geminiModel = genai.getGenerativeModel({ model: 'gemini-2.0-flash' });
+const geminiModel = genai.getGenerativeModel({ model: 'gemini-1.5-flash' });
 const rssParser = new Parser();
 
 // ============================================
