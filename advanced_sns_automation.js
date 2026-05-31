@@ -108,15 +108,16 @@ class ConfigManager {
         lookbackHours: 12
       },
 
-      // Reddit（AIコミュニティ）
-      Reddit: {
+      // HackerNews（AIコミュニティ）
+      HackerNews: {
         enabled: true,
         crawlTime: '12:00',
         timezone: 'Asia/Tokyo',
-        subreddits: ['MachineLearning', 'artificial', 'ChatGPT', 'singularity'],
         searchQueries: [
           { keyword: 'AI', exclude: ['spam'] },
-          { keyword: 'LLM', exclude: [] }
+          { keyword: 'LLM', exclude: [] },
+          { keyword: 'ChatGPT', exclude: [] },
+          { keyword: 'machine learning', exclude: [] }
         ],
         maxResults: 25,
         lookbackHours: 12
@@ -484,35 +485,33 @@ class AdvancedSNSCrawler {
     }
   }
 
-  // Reddit クローラー（無料・AIコミュニティ）
-  async crawlReddit() {
-    console.log(`\n🔍 Crawling Reddit subreddits: ${JSON.stringify(this.config.subreddits)}`);
-    const startTime = Date.now();
+  // HackerNews クローラー（完全無料・認証不要）
+  async crawlHackerNews() {
+    console.log(`\n🔍 Crawling HackerNews with keywords: ${JSON.stringify(this.config.searchQueries)}`);
 
     try {
       const posts = [];
 
-      for (const subreddit of this.config.subreddits) {
-        const response = await axios.get(
-          `https://www.reddit.com/r/${subreddit}/new.json`,
-          {
-            params: { limit: Math.ceil(this.config.maxResults / this.config.subreddits.length) },
-            headers: { 'User-Agent': 'ai-trend-bot/1.0' }
+      for (const query of this.config.searchQueries) {
+        const response = await axios.get('https://hn.algolia.com/api/v1/search', {
+          params: {
+            query: query.keyword,
+            tags: 'story',
+            hitsPerPage: Math.ceil(this.config.maxResults / this.config.searchQueries.length)
           }
-        );
+        });
 
-        if (response.data.data?.children) {
-          for (const child of response.data.data.children) {
-            const post = child.data;
-            const text = `${post.title} ${post.selftext || ''}`;
-            if (keywordFilter.matchesKeywords(text, this.config.searchQueries)) {
+        if (response.data.hits) {
+          for (const item of response.data.hits) {
+            const text = `${item.title || ''} ${item.story_text || ''}`;
+            if (keywordFilter.matchesKeywords(text, [query])) {
               posts.push({
-                id: post.id,
-                content: `${post.title}\n${post.selftext || ''}\nhttps://reddit.com${post.permalink}`,
+                id: String(item.objectID),
+                content: `${item.title}\nhttps://news.ycombinator.com/item?id=${item.objectID}`,
                 hashtags: [],
-                engagement: post.score + post.num_comments,
-                created_at: new Date(post.created_utc * 1000).toISOString(),
-                matched_query: subreddit
+                engagement: (item.points || 0) + (item.num_comments || 0),
+                created_at: item.created_at,
+                matched_query: query.keyword
               });
             }
           }
@@ -524,18 +523,18 @@ class AdvancedSNSCrawler {
           `INSERT OR IGNORE INTO filtered_posts
            (id, platform, content, hashtags, matched_queries, engagement_score, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [post.id, 'Reddit', post.content, '[]', post.matched_query, post.engagement, post.created_at]
+          [post.id, 'HackerNews', post.content, '[]', post.matched_query, post.engagement, post.created_at]
         );
       }
 
-      console.log(`✅ Reddit: ${posts.length} posts collected`);
-      await this.db.recordCrawl('Reddit', posts.length, posts.length, 0, 0);
+      console.log(`✅ HackerNews: ${posts.length} posts collected`);
+      await this.db.recordCrawl('HackerNews', posts.length, posts.length, 0, 0);
       return posts;
     } catch (error) {
-      console.error(`❌ Reddit crawl error:`, error.message);
+      console.error(`❌ HackerNews crawl error:`, error.message);
       await this.db.run(
         `INSERT INTO crawl_history (platform, crawl_time, error_message) VALUES (?, ?, ?)`,
-        ['Reddit', new Date().toISOString(), error.message]
+        ['HackerNews', new Date().toISOString(), error.message]
       );
       return [];
     }
@@ -592,8 +591,8 @@ class AdvancedSNSCrawler {
     switch (this.platform) {
       case 'NewsAPI':
         return await this.crawlNewsAPI();
-      case 'Reddit':
-        return await this.crawlReddit();
+      case 'HackerNews':
+        return await this.crawlHackerNews();
       case 'RSS':
         return await this.crawlRSS();
       default:
@@ -819,7 +818,7 @@ class AdvancedSNSOrchestrator {
     this.jobs = [];
 
     // 各ソース用クローラーを初期化
-    for (const platform of ['NewsAPI', 'Reddit', 'RSS']) {
+    for (const platform of ['NewsAPI', 'HackerNews', 'RSS']) {
       this.crawlers[platform] = new AdvancedSNSCrawler(platform, configManager, db);
     }
   }
