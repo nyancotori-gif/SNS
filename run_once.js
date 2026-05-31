@@ -1,11 +1,10 @@
 // GitHub Actions 用: 収集 → 分析 → 生成 → Slack通知 を1回実行して終了
 const axios = require('axios');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 const Parser = require('rss-parser');
 require('dotenv').config();
 
-const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const geminiModel = genai.getGenerativeModel({ model: 'gemini-1.5-flash' });
+const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const rssParser = new Parser();
 
 // ============================================
@@ -76,8 +75,11 @@ ${articleList}
   "post": "そのトレンドをもとにしたSNS投稿文（日本語・200字以内・ハッシュタグ3つ含む）"
 }`;
 
-  const response = await geminiModel.generateContent(prompt);
-  const text = response.response.text();
+  const response = await genai.models.generateContent({
+    model: 'gemini-2.0-flash-lite',
+    contents: prompt
+  });
+  const text = response.text;
 
   // JSON ブロックを抽出（```json ... ``` や { ... } 形式に対応）
   const jsonMatch = text.match(/```json\s*([\s\S]*?)```/) ||
