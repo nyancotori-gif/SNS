@@ -1,10 +1,11 @@
 // GitHub Actions 用: 収集 → 分析 → 生成 → Slack通知 を1回実行して終了
 const axios = require('axios');
-const Anthropic = require('@anthropic-ai/sdk');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Parser = require('rss-parser');
 require('dotenv').config();
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const geminiModel = genai.getGenerativeModel({ model: 'gemini-2.0-flash' });
 const rssParser = new Parser();
 
 // ============================================
@@ -65,12 +66,7 @@ async function fetchRSS() {
 async function analyzeAndGenerate(articles) {
   const articleList = articles.slice(0, 40).join('\n');
 
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 800,
-    messages: [{
-      role: 'user',
-      content: `以下は今日のAI関連ニュースの一覧です。
+  const prompt = `以下は今日のAI関連ニュースの一覧です。
 
 ${articleList}
 
@@ -78,11 +74,10 @@ ${articleList}
 {
   "trend": "今日最も注目すべきAIトレンドを1文で",
   "post": "そのトレンドをもとにしたSNS投稿文（日本語・200字以内・ハッシュタグ3つ含む）"
-}`
-    }]
-  });
+}`;
 
-  const text = response.content[0].text;
+  const response = await geminiModel.generateContent(prompt);
+  const text = response.response.text();
 
   // JSON ブロックを抽出（```json ... ``` や { ... } 形式に対応）
   const jsonMatch = text.match(/```json\s*([\s\S]*?)```/) ||
