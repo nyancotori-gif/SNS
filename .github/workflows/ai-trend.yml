@@ -26,5 +26,5 @@ jobs:
       - name: Run AI trend automation
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
         run: node advanced_sns_automation.js

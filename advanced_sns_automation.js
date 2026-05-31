@@ -10,6 +10,7 @@ const axios = require('axios');
 const Anthropic = require('@anthropic-ai/sdk');
 const sqlite3 = require('sqlite3').verbose();
 const schedule = require('node-schedule');
+const Parser = require('rss-parser');
 
 dotenv.config();
 
@@ -93,40 +94,51 @@ class ConfigManager {
   constructor() {
     // 巡回設定：時間＆キーワード
     this.crawlConfig = {
-      // X（Twitter）の設定
-      X: {
+      // NewsAPI（AIニュース記事）
+      NewsAPI: {
         enabled: true,
-        crawlTime: '18:00', // 毎日18時
+        crawlTime: '06:00',
         timezone: 'Asia/Tokyo',
         searchQueries: [
           { keyword: 'AI', exclude: ['fake', 'spam'] },
-          { keyword: 'Web3', exclude: ['scam'] },
-          { keyword: 'テクノロジー', exclude: ['広告'] }
+          { keyword: 'ChatGPT', exclude: ['scam'] },
+          { keyword: 'artificial intelligence', exclude: [] }
         ],
-        maxResults: 50,
-        lookbackHours: 6 // 過去6時間のデータを取得
+        maxResults: 20,
+        lookbackHours: 12
       },
 
-      // Instagram の設定
-      Instagram: {
+      // Reddit（AIコミュニティ）
+      Reddit: {
         enabled: true,
-        crawlTime: '18:15',
+        crawlTime: '12:00',
         timezone: 'Asia/Tokyo',
-        hashtags: ['#AI', '#テック', '#イノベーション'],
-        excludeHashtags: ['#広告', '#スパム'],
-        maxResults: 30,
-        lookbackHours: 6
+        subreddits: ['MachineLearning', 'artificial', 'ChatGPT', 'singularity'],
+        searchQueries: [
+          { keyword: 'AI', exclude: ['spam'] },
+          { keyword: 'LLM', exclude: [] }
+        ],
+        maxResults: 25,
+        lookbackHours: 12
       },
 
-      // Facebook の設定
-      Facebook: {
+      // RSS（AIニュースサイト）
+      RSS: {
         enabled: true,
-        crawlTime: '18:30',
+        crawlTime: '18:00',
         timezone: 'Asia/Tokyo',
-        keywords: ['AI', 'デジタル化', '最新技術'],
-        excludeKeywords: ['詐欺', '違法'],
-        maxResults: 30,
-        lookbackHours: 6
+        feeds: [
+          'https://techcrunch.com/tag/artificial-intelligence/feed/',
+          'https://venturebeat.com/category/ai/feed/',
+          'https://www.theverge.com/rss/ai-artificial-intelligence/index.xml'
+        ],
+        searchQueries: [
+          { keyword: 'AI', exclude: ['fake', 'spam'] },
+          { keyword: 'LLM', exclude: [] },
+          { keyword: 'ChatGPT', exclude: [] }
+        ],
+        maxResults: 20,
+        lookbackHours: 12
       }
     };
 
@@ -414,40 +426,35 @@ class AdvancedSNSCrawler {
     this.tokenUsage = { input: 0, output: 0 };
   }
 
-  // X用クローラー（キーワード指定）
-  async crawlX() {
-    console.log(`\n🔍 Crawling X with keywords: ${JSON.stringify(this.config.searchQueries)}`);
+  // NewsAPI クローラー（無料・AIニュース記事）
+  async crawlNewsAPI() {
+    console.log(`\n🔍 Crawling NewsAPI with keywords: ${JSON.stringify(this.config.searchQueries)}`);
     const startTime = Date.now();
 
     try {
       const posts = [];
 
       for (const query of this.config.searchQueries) {
-        const response = await axios.get(
-          `${process.env.X_API_URL || 'https://api.twitter.com/2'}/tweets/search/recent`,
-          {
-            params: {
-              query: query.keyword,
-              max_results: 100,
-              'tweet.fields': 'public_metrics,created_at',
-              'expansions': 'author_id'
-            },
-            headers: {
-              'Authorization': `Bearer ${process.env.X_BEARER_TOKEN}`
-            }
+        const response = await axios.get('https://newsapi.org/v2/everything', {
+          params: {
+            q: query.keyword,
+            language: 'en',
+            sortBy: 'publishedAt',
+            pageSize: Math.ceil(this.config.maxResults / this.config.searchQueries.length),
+            apiKey: process.env.NEWS_API_KEY
           }
-        );
+        });
 
-        if (response.data.data) {
-          for (const tweet of response.data.data) {
-            // キーワードフィルタリング
-            if (keywordFilter.matchesKeywords(tweet.text, [query])) {
+        if (response.data.articles) {
+          for (const article of response.data.articles) {
+            const text = `${article.title} ${article.description || ''}`;
+            if (keywordFilter.matchesKeywords(text, [query])) {
               posts.push({
-                id: tweet.id,
-                content: tweet.text,
-                hashtags: tweet.text.match(/#\w+/g) || [],
-                engagement: tweet.public_metrics.like_count + tweet.public_metrics.retweet_count,
-                created_at: tweet.created_at,
+                id: article.url,
+                content: `${article.title}\n${article.description || ''}\n${article.url}`,
+                hashtags: [],
+                engagement: 0,
+                created_at: article.publishedAt,
                 matched_query: query.keyword
               });
             }
@@ -455,175 +462,140 @@ class AdvancedSNSCrawler {
         }
       }
 
-      // DBに記録
       for (const post of posts) {
         await this.db.run(
-          `INSERT OR IGNORE INTO filtered_posts 
+          `INSERT OR IGNORE INTO filtered_posts
            (id, platform, content, hashtags, matched_queries, engagement_score, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [
-            post.id,
-            'X',
-            post.content,
-            JSON.stringify(post.hashtags),
-            post.matched_query,
-            post.engagement,
-            post.created_at
-          ]
+          [post.id, 'NewsAPI', post.content, '[]', post.matched_query, post.engagement, post.created_at]
         );
       }
 
-      const responseTime = Date.now() - startTime;
-      console.log(`✅ X: ${posts.length} posts filtered from API`);
-
-      // クローリング履歴を記録
-      await this.db.recordCrawl('X', response.data.meta?.result_count || 0, posts.length, 0, 0);
-
+      console.log(`✅ NewsAPI: ${posts.length} articles collected`);
+      await this.db.recordCrawl('NewsAPI', posts.length, posts.length, 0, 0);
       return posts;
     } catch (error) {
-      console.error(`❌ X crawl error:`, error.message);
+      console.error(`❌ NewsAPI crawl error:`, error.message);
       await this.db.run(
-        `INSERT INTO crawl_history (platform, crawl_time, error_message)
-         VALUES (?, ?, ?)`,
-        ['X', new Date().toISOString(), error.message]
+        `INSERT INTO crawl_history (platform, crawl_time, error_message) VALUES (?, ?, ?)`,
+        ['NewsAPI', new Date().toISOString(), error.message]
       );
       return [];
     }
   }
 
-  // Instagram用クローラー（ハッシュタグ指定）
-  async crawlInstagram() {
-    console.log(`\n🔍 Crawling Instagram with hashtags: ${JSON.stringify(this.config.hashtags)}`);
+  // Reddit クローラー（無料・AIコミュニティ）
+  async crawlReddit() {
+    console.log(`\n🔍 Crawling Reddit subreddits: ${JSON.stringify(this.config.subreddits)}`);
     const startTime = Date.now();
 
     try {
-      const response = await axios.get(
-        `${process.env.INSTAGRAM_API_URL || 'https://graph.instagram.com'}/me/media`,
-        {
-          params: {
-            fields: 'id,caption,media_type,timestamp,like_count,comments_count',
-            access_token: process.env.INSTAGRAM_TOKEN
+      const posts = [];
+
+      for (const subreddit of this.config.subreddits) {
+        const response = await axios.get(
+          `https://www.reddit.com/r/${subreddit}/new.json`,
+          {
+            params: { limit: Math.ceil(this.config.maxResults / this.config.subreddits.length) },
+            headers: { 'User-Agent': 'ai-trend-bot/1.0' }
           }
-        }
-      );
+        );
 
-      const filteredPosts = [];
-
-      if (response.data.data) {
-        for (const post of response.data.data) {
-          const caption = post.caption || '';
-
-          // ハッシュタグフィルタリング
-          if (keywordFilter.matchesHashtags(
-            caption,
-            this.config.hashtags,
-            this.config.excludeHashtags
-          )) {
-            filteredPosts.push({
-              id: post.id,
-              content: caption,
-              hashtags: caption.match(/#\w+/g) || [],
-              engagement: post.like_count + post.comments_count,
-              created_at: post.timestamp
-            });
+        if (response.data.data?.children) {
+          for (const child of response.data.data.children) {
+            const post = child.data;
+            const text = `${post.title} ${post.selftext || ''}`;
+            if (keywordFilter.matchesKeywords(text, this.config.searchQueries)) {
+              posts.push({
+                id: post.id,
+                content: `${post.title}\n${post.selftext || ''}\nhttps://reddit.com${post.permalink}`,
+                hashtags: [],
+                engagement: post.score + post.num_comments,
+                created_at: new Date(post.created_utc * 1000).toISOString(),
+                matched_query: subreddit
+              });
+            }
           }
         }
       }
 
-      // DBに記録
-      for (const post of filteredPosts) {
+      for (const post of posts) {
         await this.db.run(
-          `INSERT OR IGNORE INTO filtered_posts 
-           (id, platform, content, hashtags, engagement_score, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [post.id, 'Instagram', post.content, JSON.stringify(post.hashtags), post.engagement, post.created_at]
+          `INSERT OR IGNORE INTO filtered_posts
+           (id, platform, content, hashtags, matched_queries, engagement_score, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [post.id, 'Reddit', post.content, '[]', post.matched_query, post.engagement, post.created_at]
         );
       }
 
-      const responseTime = Date.now() - startTime;
-      console.log(`✅ Instagram: ${filteredPosts.length} posts filtered`);
-
-      await this.db.recordCrawl('Instagram', response.data.data?.length || 0, filteredPosts.length, 0, 0);
-
-      return filteredPosts;
+      console.log(`✅ Reddit: ${posts.length} posts collected`);
+      await this.db.recordCrawl('Reddit', posts.length, posts.length, 0, 0);
+      return posts;
     } catch (error) {
-      console.error(`❌ Instagram crawl error:`, error.message);
+      console.error(`❌ Reddit crawl error:`, error.message);
+      await this.db.run(
+        `INSERT INTO crawl_history (platform, crawl_time, error_message) VALUES (?, ?, ?)`,
+        ['Reddit', new Date().toISOString(), error.message]
+      );
       return [];
     }
   }
 
-  // Facebook用クローラー（キーワード指定）
-  async crawlFacebook() {
-    console.log(`\n🔍 Crawling Facebook with keywords: ${JSON.stringify(this.config.keywords)}`);
-    const startTime = Date.now();
+  // RSS クローラー（完全無料・AIニュースサイト）
+  async crawlRSS() {
+    console.log(`\n🔍 Crawling RSS feeds: ${this.config.feeds.length} feeds`);
+    const parser = new Parser();
 
     try {
-      const response = await axios.get(
-        `${process.env.FACEBOOK_API_URL || 'https://graph.facebook.com'}/me/feed`,
-        {
-          params: {
-            fields: 'id,message,created_time,likes.summary(true).limit(0),comments.summary(true).limit(0)',
-            access_token: process.env.FACEBOOK_PAGE_TOKEN
+      const posts = [];
+
+      for (const feedUrl of this.config.feeds) {
+        try {
+          const feed = await parser.parseURL(feedUrl);
+          for (const item of feed.items.slice(0, Math.ceil(this.config.maxResults / this.config.feeds.length))) {
+            const text = `${item.title || ''} ${item.contentSnippet || item.content || ''}`;
+            if (keywordFilter.matchesKeywords(text, this.config.searchQueries)) {
+              posts.push({
+                id: item.link || item.guid,
+                content: `${item.title}\n${item.contentSnippet || ''}\n${item.link}`,
+                hashtags: [],
+                engagement: 0,
+                created_at: item.pubDate ? new Date(item.pubDate).toISOString() : new Date().toISOString(),
+                matched_query: feedUrl
+              });
+            }
           }
-        }
-      );
-
-      const filteredPosts = [];
-
-      if (response.data.data) {
-        for (const post of response.data.data) {
-          const message = post.message || '';
-
-          // キーワードマッチング
-          const matchesKeywords = this.config.keywords.some(kw =>
-            message.toLowerCase().includes(kw.toLowerCase())
-          );
-
-          // 除外キーワードをチェック
-          const hasExcluded = this.config.excludeKeywords.some(kw =>
-            message.toLowerCase().includes(kw.toLowerCase())
-          );
-
-          if (matchesKeywords && !hasExcluded) {
-            filteredPosts.push({
-              id: post.id,
-              content: message,
-              hashtags: message.match(/#\w+/g) || [],
-              engagement: (post.likes?.summary?.total_count || 0) + (post.comments?.summary?.total_count || 0),
-              created_at: post.created_time
-            });
-          }
+        } catch (feedError) {
+          console.error(`❌ RSS feed error (${feedUrl}):`, feedError.message);
         }
       }
 
-      // DBに記録
-      for (const post of filteredPosts) {
+      for (const post of posts) {
         await this.db.run(
-          `INSERT OR IGNORE INTO filtered_posts 
-           (id, platform, content, hashtags, engagement_score, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [post.id, 'Facebook', post.content, JSON.stringify(post.hashtags), post.engagement, post.created_at]
+          `INSERT OR IGNORE INTO filtered_posts
+           (id, platform, content, hashtags, matched_queries, engagement_score, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [post.id, 'RSS', post.content, '[]', post.matched_query, post.engagement, post.created_at]
         );
       }
 
-      console.log(`✅ Facebook: ${filteredPosts.length} posts filtered`);
-      await this.db.recordCrawl('Facebook', response.data.data?.length || 0, filteredPosts.length, 0, 0);
-
-      return filteredPosts;
+      console.log(`✅ RSS: ${posts.length} articles collected`);
+      await this.db.recordCrawl('RSS', posts.length, posts.length, 0, 0);
+      return posts;
     } catch (error) {
-      console.error(`❌ Facebook crawl error:`, error.message);
+      console.error(`❌ RSS crawl error:`, error.message);
       return [];
     }
   }
 
   async crawl() {
     switch (this.platform) {
-      case 'X':
-        return await this.crawlX();
-      case 'Instagram':
-        return await this.crawlInstagram();
-      case 'Facebook':
-        return await this.crawlFacebook();
+      case 'NewsAPI':
+        return await this.crawlNewsAPI();
+      case 'Reddit':
+        return await this.crawlReddit();
+      case 'RSS':
+        return await this.crawlRSS();
       default:
         throw new Error(`Unknown platform: ${this.platform}`);
     }
@@ -846,8 +818,8 @@ class AdvancedSNSOrchestrator {
     this.contentGenerator = new AdvancedContentGenerator(db);
     this.jobs = [];
 
-    // 各プラットフォーム用クローラーを初期化
-    for (const platform of ['X', 'Instagram', 'Facebook']) {
+    // 各ソース用クローラーを初期化
+    for (const platform of ['NewsAPI', 'Reddit', 'RSS']) {
       this.crawlers[platform] = new AdvancedSNSCrawler(platform, configManager, db);
     }
   }
