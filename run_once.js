@@ -78,8 +78,18 @@ ${articleList}
     "注目ニュース2（1文で具体的に）",
     "注目ニュース3（1文で具体的に）"
   ],
-  "post": "SNS投稿文（日本語・300字程度・具体的な数字や固有名詞を含む・ハッシュタグ3〜5個を末尾に）"
-}`;
+  "posts": [
+    "投稿文1（日本語・140字以内・ハッシュタグなし・1つの切り口で完結する内容）",
+    "投稿文2（日本語・140字以内・ハッシュタグなし・別の切り口）",
+    "投稿文3（日本語・140字以内・末尾にハッシュタグ3〜5個・まとめ or 感想）"
+  ]
+}
+
+ルール:
+- 各投稿は必ず140字以内に収める
+- 内容が少なければ2件でも可、多ければ4件まで可
+- 各投稿は単独で意味が通じる完結した文章にする
+- 数字・企業名・モデル名などの固有名詞を積極的に含める`;
 
   const response = await groq.chat.completions.create({
     model: 'llama-3.3-70b-versatile',
@@ -116,7 +126,9 @@ async function sendToSlack(result) {
     console.log(`トレンド: ${result.top_trend}`);
     console.log(`\n概要:\n${result.summary}`);
     console.log(`\n注目ニュース:\n${newsPicks}`);
-    console.log(`\n投稿文:\n${result.post}`);
+    (result.posts || []).forEach((post, i) => {
+      console.log(`\n投稿文[${i + 1}]:\n${post}`);
+    });
     return;
   }
 
@@ -142,8 +154,12 @@ async function sendToSlack(result) {
       { type: 'divider' },
       {
         type: 'section',
-        text: { type: 'mrkdwn', text: `*SNS投稿文*\n${result.post}` }
-      }
+        text: { type: 'mrkdwn', text: `*SNS投稿文（${(result.posts || []).length}件）*` }
+      },
+      ...(result.posts || []).map((post, i) => ({
+        type: 'section',
+        text: { type: 'mrkdwn', text: `*[${i + 1}/${(result.posts || []).length}]*\n${post}` }
+      }))
     ]
   });
 
