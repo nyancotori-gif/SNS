@@ -82,7 +82,20 @@ ${articleList}
     }]
   });
 
-  return JSON.parse(response.content[0].text);
+  const text = response.content[0].text;
+
+  // JSON ブロックを抽出（```json ... ``` や { ... } 形式に対応）
+  const jsonMatch = text.match(/```json\s*([\s\S]*?)```/) ||
+                    text.match(/```\s*([\s\S]*?)```/) ||
+                    text.match(/(\{[\s\S]*\})/);
+
+  if (!jsonMatch) {
+    // JSON が見つからない場合はテキストをそのまま使う
+    console.warn('⚠️ JSON形式で返ってきませんでした。テキストをそのまま使用します。');
+    return { trend: 'AIトレンド', post: text.slice(0, 200) };
+  }
+
+  return JSON.parse(jsonMatch[1]);
 }
 
 // ============================================
