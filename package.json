@@ -1,0 +1,17 @@
+{
+  "name": "ai-trend-sns-automation",
+  "version": "1.0.0",
+  "description": "AI trend tracking and SNS auto-posting system",
+  "main": "advanced_sns_automation.js",
+  "scripts": {
+    "start": "node advanced_sns_automation.js",
+    "dev": "nodemon advanced_sns_automation.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.20.0",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.0",
+    "node-schedule": "^2.1.1",
+    "sqlite3": "^5.1.6"
+  }
+}
