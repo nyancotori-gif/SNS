@@ -51,25 +51,38 @@ async function fetchHackerNews(keyword) {
 
 async function fetchRSS() {
   const feeds = [
-    'https://techcrunch.com/tag/artificial-intelligence/feed/',
-    'https://venturebeat.com/category/ai/feed/'
+    // 日本語メディア
+    { url: 'https://rss.itmedia.co.jp/rss/2.0/aiplus.xml',       lang: 'ja' },
+    { url: 'https://jp.techcrunch.com/feed/',                      lang: 'ja' },
+    { url: 'https://ledge.ai/feed/',                               lang: 'ja' },
+    { url: 'https://ainow.ai/feed/',                               lang: 'ja' },
+    // 英語メディア（補完用）
+    { url: 'https://techcrunch.com/tag/artificial-intelligence/feed/', lang: 'en' },
+    { url: 'https://venturebeat.com/category/ai/feed/',            lang: 'en' }
   ];
-  const articles = [];
-  for (const feedUrl of feeds) {
+
+  const jaArticles = [];
+  const enArticles = [];
+
+  for (const { url: feedUrl, lang } of feeds) {
     try {
       const feed = await rssParser.parseURL(feedUrl);
       feed.items.slice(0, 8).forEach(item => {
-        articles.push({
+        const article = {
           title: item.title || '',
           description: item.contentSnippet ? item.contentSnippet.slice(0, 200) : '',
-          url: item.link || ''
-        });
+          url: item.link || '',
+          lang
+        };
+        lang === 'ja' ? jaArticles.push(article) : enArticles.push(article);
       });
     } catch (e) {
       console.error(`RSS error (${feedUrl}):`, e.message);
     }
   }
-  return articles;
+
+  // 日本語記事を優先して返す
+  return [...jaArticles, ...enArticles];
 }
 
 // ============================================
@@ -77,9 +90,13 @@ async function fetchRSS() {
 // ============================================
 
 async function analyzeAndGenerate(articles) {
-  // AIに渡すリスト：タイトル・概要・URLをセットで渡す
-  const articleList = articles.slice(0, 35).map((a, i) =>
-    `[${i + 1}] ${a.title}\n    概要: ${a.description || '(なし)'}\n    URL: ${a.url}`
+  // 日本語記事を優先し、残りを英語記事で補完
+  const jaArticles = articles.filter(a => a.lang === 'ja');
+  const enArticles = articles.filter(a => a.lang !== 'ja');
+  const sorted = [...jaArticles, ...enArticles].slice(0, 35);
+
+  const articleList = sorted.map((a, i) =>
+    `[${i + 1}][${a.lang === 'ja' ? '日本語' : '英語'}] ${a.title}\n    概要: ${a.description || '(なし)'}\n    URL: ${a.url}`
   ).join('\n\n');
 
   const prompt = `以下は今日のAI関連ニュース一覧です（番号・タイトル・概要・URL付き）。
@@ -103,9 +120,12 @@ ${articleList}
 }
 
 ルール:
+- 日本語記事がある場合は日本語記事を優先してまとめる
+- 英語記事は日本語記事を補完する用途で使い、投稿文には日本語で内容を反映させる
 - news_picks の url は必ず上記一覧に実際に存在するURLを使う
 - 各投稿文は対応するニュースの内容を正確に反映させる（創作・憶測を入れない）
 - 投稿文は200〜280字を目安にする（短すぎない）
+- 投稿文はすべて日本語で書く
 - 内容に応じて投稿文は2〜4件に調整してよい`;
 
   const response = await groq.chat.completions.create({
