@@ -8,7 +8,7 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const rssParser = new Parser();
 
 // ============================================
-// 1. データ収集
+// 1. データ収集（URLと概要を保持）
 // ============================================
 
 async function fetchNewsAPI(keyword) {
@@ -22,7 +22,11 @@ async function fetchNewsAPI(keyword) {
         apiKey: process.env.NEWS_API_KEY
       }
     });
-    return (res.data.articles || []).map(a => `${a.title}: ${a.description || ''}`);
+    return (res.data.articles || []).map(a => ({
+      title: a.title || '',
+      description: a.description || '',
+      url: a.url || ''
+    }));
   } catch (e) {
     console.error('NewsAPI error:', e.message);
     return [];
@@ -34,7 +38,11 @@ async function fetchHackerNews(keyword) {
     const res = await axios.get('https://hn.algolia.com/api/v1/search', {
       params: { query: keyword, tags: 'story', hitsPerPage: 10 }
     });
-    return (res.data.hits || []).map(h => h.title);
+    return (res.data.hits || []).map(h => ({
+      title: h.title || '',
+      description: h.story_text ? h.story_text.slice(0, 200) : '',
+      url: h.url || `https://news.ycombinator.com/item?id=${h.objectID}`
+    }));
   } catch (e) {
     console.error('HackerNews error:', e.message);
     return [];
@@ -46,67 +54,74 @@ async function fetchRSS() {
     'https://techcrunch.com/tag/artificial-intelligence/feed/',
     'https://venturebeat.com/category/ai/feed/'
   ];
-  const titles = [];
-  for (const url of feeds) {
+  const articles = [];
+  for (const feedUrl of feeds) {
     try {
-      const feed = await rssParser.parseURL(url);
-      feed.items.slice(0, 8).forEach(item => titles.push(item.title));
+      const feed = await rssParser.parseURL(feedUrl);
+      feed.items.slice(0, 8).forEach(item => {
+        articles.push({
+          title: item.title || '',
+          description: item.contentSnippet ? item.contentSnippet.slice(0, 200) : '',
+          url: item.link || ''
+        });
+      });
     } catch (e) {
-      console.error(`RSS error (${url}):`, e.message);
+      console.error(`RSS error (${feedUrl}):`, e.message);
     }
   }
-  return titles;
+  return articles;
 }
 
 // ============================================
-// 2. Claude でトレンド分析 & 投稿文生成
+// 2. Groq でトレンド分析 & 投稿文生成
 // ============================================
 
 async function analyzeAndGenerate(articles) {
-  const articleList = articles.slice(0, 40).join('\n');
+  // AIに渡すリスト：タイトル・概要・URLをセットで渡す
+  const articleList = articles.slice(0, 35).map((a, i) =>
+    `[${i + 1}] ${a.title}\n    概要: ${a.description || '(なし)'}\n    URL: ${a.url}`
+  ).join('\n\n');
 
-  const prompt = `以下は今日のAI関連ニュースの一覧です。
+  const prompt = `以下は今日のAI関連ニュース一覧です（番号・タイトル・概要・URL付き）。
 
 ${articleList}
 
-これらを分析して、以下をJSON形式で返してください（説明不要・JSONのみ）:
+上記を分析して、以下をJSON形式で返してください（説明不要・JSONのみ）:
 {
-  "top_trend": "今日最も注目すべきAIトレンドのタイトル（20字以内）",
-  "summary": "そのトレンドの背景・理由・影響を3〜4文で具体的に説明。数字・企業名・モデル名など固有名詞を必ず含める",
+  "top_trend": "今日最も注目すべきAIトレンドのタイトル（25字以内）",
+  "summary": "そのトレンドの背景・理由・影響を4〜5文で具体的に説明。数字・企業名・モデル名などの固有名詞を必ず含める",
   "news_picks": [
-    "注目ニュース1（1文で具体的に）",
-    "注目ニュース2（1文で具体的に）",
-    "注目ニュース3（1文で具体的に）"
+    { "text": "注目ニュース1の説明（2〜3文で具体的に）", "url": "参照した記事のURL" },
+    { "text": "注目ニュース2の説明（2〜3文で具体的に）", "url": "参照した記事のURL" },
+    { "text": "注目ニュース3の説明（2〜3文で具体的に）", "url": "参照した記事のURL" }
   ],
   "posts": [
-    "投稿文1（日本語・140字以内・ハッシュタグなし・1つの切り口で完結する内容）",
-    "投稿文2（日本語・140字以内・ハッシュタグなし・別の切り口）",
-    "投稿文3（日本語・140字以内・末尾にハッシュタグ3〜5個・まとめ or 感想）"
+    "投稿文1（日本語・200〜280字・上記ニュースの内容を忠実に反映・具体的な数字や固有名詞を含む・ハッシュタグなし）",
+    "投稿文2（日本語・200〜280字・別の記事の内容を忠実に反映・具体的な数字や固有名詞を含む・ハッシュタグなし）",
+    "投稿文3（日本語・200〜280字・まとめや考察・末尾にハッシュタグ3〜5個）"
   ]
 }
 
 ルール:
-- 各投稿は必ず140字以内に収める
-- 内容が少なければ2件でも可、多ければ4件まで可
-- 各投稿は単独で意味が通じる完結した文章にする
-- 数字・企業名・モデル名などの固有名詞を積極的に含める`;
+- news_picks の url は必ず上記一覧に実際に存在するURLを使う
+- 各投稿文は対応するニュースの内容を正確に反映させる（創作・憶測を入れない）
+- 投稿文は200〜280字を目安にする（短すぎない）
+- 内容に応じて投稿文は2〜4件に調整してよい`;
 
   const response = await groq.chat.completions.create({
     model: 'llama-3.3-70b-versatile',
     messages: [{ role: 'user', content: prompt }],
-    max_tokens: 1500
+    max_tokens: 2000
   });
   const text = response.choices[0].message.content;
 
-  // JSON ブロックを抽出（```json ... ``` や { ... } 形式に対応）
   const jsonMatch = text.match(/```json\s*([\s\S]*?)```/) ||
                     text.match(/```\s*([\s\S]*?)```/) ||
                     text.match(/(\{[\s\S]*\})/);
 
   if (!jsonMatch) {
-    // JSON が見つからない場合はテキストをそのまま使う
-    console.warn('⚠️ JSON形式で返ってきませんでした。テキストをそのまま使用します。');
-    return { trend: 'AIトレンド', post: text.slice(0, 200) };
+    console.warn('⚠️ JSON形式で返ってきませんでした');
+    return { top_trend: 'AIトレンド', summary: text.slice(0, 300), news_picks: [], posts: [] };
   }
 
   return JSON.parse(jsonMatch[1]);
@@ -118,19 +133,36 @@ ${articleList}
 
 async function sendToSlack(result) {
   const webhookUrl = process.env.SLACK_WEBHOOK_URL;
-  const newsPicks = (result.news_picks || []).map(n => `• ${n}`).join('\n');
   const today = new Date().toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' });
+  const picks = result.news_picks || [];
+  const posts = result.posts || [];
 
   if (!webhookUrl) {
     console.log('\n===== 生成された投稿 =====');
     console.log(`トレンド: ${result.top_trend}`);
     console.log(`\n概要:\n${result.summary}`);
-    console.log(`\n注目ニュース:\n${newsPicks}`);
-    (result.posts || []).forEach((post, i) => {
-      console.log(`\n投稿文[${i + 1}]:\n${post}`);
-    });
+    picks.forEach((p, i) => console.log(`\n注目ニュース[${i + 1}]:\n${p.text}\n${p.url}`));
+    posts.forEach((post, i) => console.log(`\n投稿文[${i + 1}]:\n${post}`));
     return;
   }
+
+  // 注目ニュースのブロック（URLリンク付き）
+  const newsBlocks = picks.map((p, i) => ({
+    type: 'section',
+    text: {
+      type: 'mrkdwn',
+      text: `*${i + 1}.* ${p.text}\n<${p.url}|記事を読む>`
+    }
+  }));
+
+  // 投稿文のブロック
+  const postBlocks = posts.map((post, i) => ({
+    type: 'section',
+    text: {
+      type: 'mrkdwn',
+      text: `*[${i + 1}/${posts.length}]*\n${post}`
+    }
+  }));
 
   await axios.post(webhookUrl, {
     blocks: [
@@ -149,17 +181,15 @@ async function sendToSlack(result) {
       { type: 'divider' },
       {
         type: 'section',
-        text: { type: 'mrkdwn', text: `*注目ニュース3選*\n${newsPicks}` }
+        text: { type: 'mrkdwn', text: `*注目ニュース${picks.length}選*` }
       },
+      ...newsBlocks,
       { type: 'divider' },
       {
         type: 'section',
-        text: { type: 'mrkdwn', text: `*SNS投稿文（${(result.posts || []).length}件）*` }
+        text: { type: 'mrkdwn', text: `*SNS投稿文（${posts.length}件）*` }
       },
-      ...(result.posts || []).map((post, i) => ({
-        type: 'section',
-        text: { type: 'mrkdwn', text: `*[${i + 1}/${(result.posts || []).length}]*\n${post}` }
-      }))
+      ...postBlocks
     ]
   });
 
@@ -173,7 +203,6 @@ async function sendToSlack(result) {
 async function main() {
   console.log('=== AI Trend Bot 起動 ===');
 
-  // 収集
   console.log('📡 ニュースを収集中...');
   const [newsArticles, hnPosts, rssArticles] = await Promise.all([
     fetchNewsAPI('AI OR LLM OR ChatGPT'),
@@ -189,12 +218,10 @@ async function main() {
     process.exit(1);
   }
 
-  // 分析 & 生成
-  console.log('🤖 Claude で分析・投稿文生成中...');
+  console.log('🤖 Groq で分析・投稿文生成中...');
   const result = await analyzeAndGenerate(allArticles);
-  console.log(`✅ 生成完了`);
+  console.log('✅ 生成完了');
 
-  // Slack 送信
   await sendToSlack(result);
 }
 
