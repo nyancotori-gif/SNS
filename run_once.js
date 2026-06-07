@@ -52,10 +52,10 @@ async function fetchHackerNews(keyword) {
 async function fetchRSS() {
   const feeds = [
     // 日本語メディア
-    { url: 'https://rss.itmedia.co.jp/rss/2.0/aiplus.xml',       lang: 'ja' },
-    { url: 'https://jp.techcrunch.com/feed/',                      lang: 'ja' },
-    { url: 'https://ledge.ai/feed/',                               lang: 'ja' },
-    { url: 'https://ainow.ai/feed/',                               lang: 'ja' },
+    { url: 'https://rss.itmedia.co.jp/rss/2.0/aiplus.xml',        lang: 'ja' },
+    { url: 'https://www.itmedia.co.jp/news/rss/2.0/',              lang: 'ja' },
+    { url: 'https://gigazine.net/news/rss_2.0/',                   lang: 'ja' },
+    { url: 'https://ascii.jp/rss.xml',                             lang: 'ja' },
     // 英語メディア（補完用）
     { url: 'https://techcrunch.com/tag/artificial-intelligence/feed/', lang: 'en' },
     { url: 'https://venturebeat.com/category/ai/feed/',            lang: 'en' }
@@ -144,7 +144,9 @@ ${articleList}
     return { top_trend: 'AIトレンド', summary: text.slice(0, 300), news_picks: [], posts: [] };
   }
 
-  return JSON.parse(jsonMatch[1]);
+  // 制御文字（タブ・改行以外）を除去してからパース
+  const sanitized = jsonMatch[1].replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  return JSON.parse(sanitized);
 }
 
 // ============================================
