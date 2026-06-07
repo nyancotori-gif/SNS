@@ -3,9 +3,7 @@ name: AI Trend Auto Post
 on:
   schedule:
     - cron: '0 21 * * *'   # 日本時間 06:00
-    - cron: '0 3 * * *'    # 日本時間 12:00
     - cron: '0 9 * * *'    # 日本時間 18:00
-    - cron: '0 14 * * *'   # 日本時間 23:00
   workflow_dispatch:        # 手動実行ボタン
 
 jobs:
