@@ -8,7 +8,7 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const rssParser = new Parser();
 
 // ============================================
-// 1. データ収集（URLと概要を保持）
+// 1. データ収集
 // ============================================
 
 async function fetchNewsAPI(keyword) {
@@ -25,7 +25,8 @@ async function fetchNewsAPI(keyword) {
     return (res.data.articles || []).map(a => ({
       title: a.title || '',
       description: a.description || '',
-      url: a.url || ''
+      url: a.url || '',
+      lang: 'en'
     }));
   } catch (e) {
     console.error('NewsAPI error:', e.message);
@@ -41,7 +42,8 @@ async function fetchHackerNews(keyword) {
     return (res.data.hits || []).map(h => ({
       title: h.title || '',
       description: h.story_text ? h.story_text.slice(0, 200) : '',
-      url: h.url || `https://news.ycombinator.com/item?id=${h.objectID}`
+      url: h.url || `https://news.ycombinator.com/item?id=${h.objectID}`,
+      lang: 'en'
     }));
   } catch (e) {
     console.error('HackerNews error:', e.message);
@@ -52,13 +54,16 @@ async function fetchHackerNews(keyword) {
 async function fetchRSS() {
   const feeds = [
     // 日本語メディア
-    { url: 'https://rss.itmedia.co.jp/rss/2.0/aiplus.xml',        lang: 'ja' },
-    { url: 'https://www.itmedia.co.jp/news/rss/2.0/',              lang: 'ja' },
-    { url: 'https://gigazine.net/news/rss_2.0/',                   lang: 'ja' },
-    { url: 'https://ascii.jp/rss.xml',                             lang: 'ja' },
-    // 英語メディア（補完用）
+    { url: 'https://rss.itmedia.co.jp/rss/2.0/aiplus.xml',            lang: 'ja' },
+    { url: 'https://www.itmedia.co.jp/news/rss/2.0/',                  lang: 'ja' },
+    { url: 'https://gigazine.net/news/rss_2.0/',                       lang: 'ja' },
+    { url: 'https://ascii.jp/rss.xml',                                 lang: 'ja' },
+    // 米国メジャーメディア
     { url: 'https://techcrunch.com/tag/artificial-intelligence/feed/', lang: 'en' },
-    { url: 'https://venturebeat.com/category/ai/feed/',            lang: 'en' }
+    { url: 'https://venturebeat.com/category/ai/feed/',                lang: 'en' },
+    { url: 'https://www.theverge.com/rss/ai-artificial-intelligence/index.xml', lang: 'en' },
+    { url: 'https://www.wired.com/feed/tag/ai/latest/rss',             lang: 'en' },
+    { url: 'https://www.technologyreview.com/feed/',                   lang: 'en' }
   ];
 
   const jaArticles = [];
@@ -67,7 +72,7 @@ async function fetchRSS() {
   for (const { url: feedUrl, lang } of feeds) {
     try {
       const feed = await rssParser.parseURL(feedUrl);
-      feed.items.slice(0, 8).forEach(item => {
+      feed.items.slice(0, 6).forEach(item => {
         const article = {
           title: item.title || '',
           description: item.contentSnippet ? item.contentSnippet.slice(0, 200) : '',
@@ -81,16 +86,28 @@ async function fetchRSS() {
     }
   }
 
-  // 日本語記事を優先して返す
   return [...jaArticles, ...enArticles];
 }
 
 // ============================================
-// 2. Groq でトレンド分析 & 投稿文生成
+// 2. URL短縮（TinyURL・認証不要）
+// ============================================
+
+async function shortenUrl(url) {
+  if (!url) return '';
+  try {
+    const res = await axios.get(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(url)}`, { timeout: 5000 });
+    return res.data || url;
+  } catch {
+    return url;
+  }
+}
+
+// ============================================
+// 3. Groq でトレンド分析 & 投稿文生成
 // ============================================
 
 async function analyzeAndGenerate(articles) {
-  // 日本語記事を優先し、残りを英語記事で補完
   const jaArticles = articles.filter(a => a.lang === 'ja');
   const enArticles = articles.filter(a => a.lang !== 'ja');
   const sorted = [...jaArticles, ...enArticles].slice(0, 35);
@@ -113,25 +130,38 @@ ${articleList}
     { "text": "注目ニュース3の説明（2〜3文で具体的に）", "url": "参照した記事のURL" }
   ],
   "posts": [
-    "投稿文1（日本語・80〜120字・ニュースの要点を一言でまとめる・ハッシュタグなし）",
-    "投稿文2（日本語・80〜120字・別のニュースの要点・ハッシュタグなし）",
-    "投稿文3（日本語・80〜120字・まとめや一言コメント・末尾にハッシュタグ2〜3個）"
+    {
+      "text": "投稿文1（日本語・150〜200字・ニュースの内容を正確に反映・具体的な数字や固有名詞を含む）",
+      "hashtags": ["#AI", "#生成AI", "#ChatGPT"],
+      "source_url": "この投稿の根拠となった記事のURL"
+    },
+    {
+      "text": "投稿文2（日本語・150〜200字・別のニュースを反映）",
+      "hashtags": ["#AI", "#LLM", "#テック"],
+      "source_url": "この投稿の根拠となった記事のURL"
+    },
+    {
+      "text": "投稿文3（日本語・150〜200字・まとめや考察）",
+      "hashtags": ["#AI", "#AIトレンド", "#人工知能", "#テクノロジー"],
+      "source_url": "この投稿の根拠となった記事のURL"
+    }
   ]
 }
 
 ルール:
 - 日本語記事がある場合は日本語記事を優先してまとめる
-- 英語記事は日本語記事を補完する用途で使い、投稿文には日本語で内容を反映させる
-- news_picks の url は必ず上記一覧に実際に存在するURLを使う
+- 英語記事（特に米国メジャーメディア）も重要なトピックは取り上げる
+- news_picks と posts の source_url は必ず上記一覧に実際に存在するURLを使う
 - 各投稿文は対応するニュースの内容を正確に反映させる（創作・憶測を入れない）
-- 投稿文は80〜120字を目安にする（要点だけを簡潔に）
+- 投稿文は150〜200字を目安にする
+- ハッシュタグは各投稿に3〜5個つける
 - 投稿文はすべて日本語で書く
 - 内容に応じて投稿文は2〜4件に調整してよい`;
 
   const response = await groq.chat.completions.create({
     model: 'llama-3.3-70b-versatile',
     messages: [{ role: 'user', content: prompt }],
-    max_tokens: 2000
+    max_tokens: 2500
   });
   const text = response.choices[0].message.content;
 
@@ -144,13 +174,12 @@ ${articleList}
     return { top_trend: 'AIトレンド', summary: text.slice(0, 300), news_picks: [], posts: [] };
   }
 
-  // 制御文字（タブ・改行以外）を除去してからパース
   const sanitized = jsonMatch[1].replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
   return JSON.parse(sanitized);
 }
 
 // ============================================
-// 3. Slack 通知
+// 4. Slack 通知
 // ============================================
 
 async function sendToSlack(result) {
@@ -159,30 +188,37 @@ async function sendToSlack(result) {
   const picks = result.news_picks || [];
   const posts = result.posts || [];
 
+  // 投稿文のURLを短縮
+  const postsWithShortUrl = await Promise.all(
+    posts.map(async post => ({
+      ...post,
+      short_url: await shortenUrl(post.source_url)
+    }))
+  );
+
   if (!webhookUrl) {
     console.log('\n===== 生成された投稿 =====');
     console.log(`トレンド: ${result.top_trend}`);
     console.log(`\n概要:\n${result.summary}`);
     picks.forEach((p, i) => console.log(`\n注目ニュース[${i + 1}]:\n${p.text}\n${p.url}`));
-    posts.forEach((post, i) => console.log(`\n投稿文[${i + 1}]:\n${post}`));
+    postsWithShortUrl.forEach((post, i) => {
+      console.log(`\n投稿文[${i + 1}]:\n${post.text}`);
+      console.log(`ハッシュタグ: ${(post.hashtags || []).join(' ')}`);
+      console.log(`ソース: ${post.short_url}`);
+    });
     return;
   }
 
-  // 注目ニュースのブロック（URLリンク付き）
   const newsBlocks = picks.map((p, i) => ({
     type: 'section',
-    text: {
-      type: 'mrkdwn',
-      text: `*${i + 1}.* ${p.text}\n<${p.url}|記事を読む>`
-    }
+    text: { type: 'mrkdwn', text: `*${i + 1}.* ${p.text}\n<${p.url}|記事を読む>` }
   }));
 
-  // 投稿文のブロック
-  const postBlocks = posts.map((post, i) => ({
+  const postBlocks = postsWithShortUrl.map((post, i) => ({
     type: 'section',
     text: {
       type: 'mrkdwn',
-      text: `*[${i + 1}/${posts.length}]*\n${post}`
+      text: `*[${i + 1}/${postsWithShortUrl.length}]*\n${post.text}\n${(post.hashtags || []).join(' ')}\nソース: ${post.short_url}`
     }
   }));
 
@@ -209,7 +245,7 @@ async function sendToSlack(result) {
       { type: 'divider' },
       {
         type: 'section',
-        text: { type: 'mrkdwn', text: `*SNS投稿文（${posts.length}件）*` }
+        text: { type: 'mrkdwn', text: `*SNS投稿文（${postsWithShortUrl.length}件）*` }
       },
       ...postBlocks
     ]
@@ -219,7 +255,7 @@ async function sendToSlack(result) {
 }
 
 // ============================================
-// 4. メイン実行
+// 5. メイン実行
 // ============================================
 
 async function main() {
